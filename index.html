@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flower Garden - p5.js</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body, html {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: linear-gradient(
+        110deg,
+        oklch(58% 0.28 255) 0%,
+        oklch(42% 0.34 295) 100%
+      );
+      width: 100%;
+      height: 100%;
+    }
+
+    canvas {
+      display: block;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    .tp-dfwv {
+      position: absolute !important;
+      top: 15px !important;
+      right: 15px !important;
+      z-index: 100 !important;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5) !important;
+    }
+
+    /* Подсказка внизу */
+    .hint {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 50;
+      color: rgba(255,255,255,0.4);
+      font-family: system-ui, sans-serif;
+      font-size: 0.75rem;
+      text-align: center;
+      pointer-events: none;
+      background: rgba(0,0,0,0.3);
+      padding: 0.3rem 1rem;
+      border-radius: 20px;
+      backdrop-filter: blur(4px);
+    }
+
+    @media (max-width: 600px) {
+      .hint { font-size: 0.6rem; bottom: 10px; padding: 0.2rem 0.8rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<div class="hint">🖱️ Click anywhere to regenerate · ⚙️ Tweak settings in the panel</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "tweakpane": "https://cdn.jsdelivr.net/npm/tweakpane@4.0.3/dist/tweakpane.min.js"
+  }
+}
+</script>
+
+<script type="module">
+  import { Pane } from "tweakpane";
+
+  const PALETTE = [
+    "#FF006E",
+    "#FB5607",
+    "#FFBE0B",
+    "#22C55E",
+    "#00E5FF",
+    "#3A86FF",
+    "#8338EC"
+  ];
+
+  const FLOWER_SPECIES = ["daisy", "cosmos", "blossom"];
+  const BUG_SPECIES = ["ladybug", "bee", "butterfly"];
+  const LEAF_PAD = 1.62;
+
+  const PARAMS = {
+    flowerType: "mixed",
+    minRadius: 36,
+    maxRadius: 72,
+    maxFlowers: 250,
+    maxAttempts: 25000,
+    spawnBugs: true,
+    bugChance: 0.25
+  };
+
+  let flowers = [];
+  let pane;
+
+  // --- p5.js functions ---
+  window.setup = function() {
+    const container = document.getElementById('canvas-container');
+    const canvas = createCanvas(windowWidth, windowHeight);
+    canvas.parent(container);
+    pane = createTweakPane(PARAMS, regenerate);
+    regenerate();
+  };
+
+  window.draw = function() {
+    clear();
+    flowers.forEach(renderFlower);
+  };
+
+  window.windowResized = function() {
+    resizeCanvas(windowWidth, windowHeight);
+    regenerate();
+  };
+
+  window.mousePressed = function(e) {
+    if (e?.target?.closest?.(".tp-dfwv")) return;
+    regenerate();
+  };
+
+  // --- Core logic ---
+  const maxRadiusAt = (x, y, minR) => (placed) =>
+    placed.reduce((allowed, f) => {
+      const room = Math.hypot(f.x - x, f.y - y) / LEAF_PAD - f.r;
+      return room < minR ? -Infinity : Math.min(allowed, room);
+    }, Infinity);
+
+  const makeFlower = (x, y, r) => ({
+    x,
+    y,
+    r,
+    type:
+      PARAMS.flowerType === "mixed" ? random(FLOWER_SPECIES) : PARAMS.flowerType,
+    baseColor: color(random(PALETTE)),
+    rotation: random(TWO_PI),
+    seed: Math.floor(random(999999)),
+    hasBug: random() < PARAMS.bugChance,
+    bugType: random(BUG_SPECIES),
+    bugAngle: random(TWO_PI),
+    bugDistanceRatio: random(0.2, 0.55),
+    bugScale: random(2.2, 2.6),
+    skewX: random(0.9, 1.1),
+    skewY: random(0.85, 1.15),
+    leafCount: Math.floor(random(2, 4))
+  });
+
+  const regenerate = () => {
+    const { minRadius, maxRadius, maxFlowers, maxAttempts } = PARAMS;
+    const field = [];
+    let attempts = 0;
+    while (field.length < maxFlowers && attempts < maxAttempts) {
+      const x = random(width),
+        y = random(height);
+      const allowed = Math.min(maxRadiusAt(x, y, minRadius)(field), maxRadius);
+      if (allowed >= minRadius) field.push(makeFlower(x, y, allowed));
+      attempts++;
+    }
+    flowers = field;
+  };
+
+  // --- Drawing helpers ---
+  const drawBezierBlade = (len, wid, factorY) => {
+    beginShape();
+    vertex(0, 0);
+    bezierVertex(-wid, -len * factorY, -wid * 0.8, -len, 0, -len);
+    bezierVertex(wid * 0.8, -len, wid, -len * factorY, 0, 0);
+    endShape(CLOSE);
+  };
+
+  const teardrop = (l, w, c1, c2) => {
+    fill(c1);
+    drawBezierBlade(l, w, 0.25);
+    fill(c2);
+    drawBezierBlade(l * 0.85, w * 0.6, 0.25);
+  };
+
+  const petalRing = (count, len, wid, c1, c2, offset = 0) => {
+    for (let i = 0; i < count; i++) {
+      push();
+      rotate((TWO_PI * i) / count + offset + random(-0.05, 0.05));
+      teardrop(len * random(0.93, 1.07), wid * random(0.9, 1.12), c1, c2);
+      pop();
+    }
+  };
+
+  const leaf = (r, angle = 0, offset = 0) => {
+    const l = r * random(0.9, 1.4);
+    const w = r * random(0.35, 0.55);
+
+    push();
+    rotate(angle);
+    translate(0, -offset);
+
+    fill("#22632b");
+    drawBezierBlade(l, w, 0.3);
+
+    stroke("#16421c");
+    strokeWeight(r * 0.04);
+    line(0, 0, 0, -l * 0.85);
+
+    noStroke();
+    pop();
+  };
+
+  const leafCluster = (count, r) => {
+    push();
+    rotate(random(TWO_PI));
+
+    const spacing = r * 0.35;
+
+    for (let i = 0; i < count; i++) {
+      const angle =
+        (TWO_PI / count) * i +
+        random(-0.15, 0.15);
+
+      const offset = spacing + random(0, r * 0.25);
+
+      leaf(r, angle, offset);
+    }
+
+    pop();
+  };
+
+  const speckledCenter = (radius, fillC, dotC, count, range) => {
+    strokeWeight(0.65);
+    fill(fillC);
+    circle(0, 0, radius);
+    fill(dotC);
+    for (let i = 0; i < count; i++) {
+      const a = random(TWO_PI),
+        d = random(radius * 0.85);
+      circle(cos(a) * d, sin(a) * d, random(...range));
+    }
+  };
+
+  // --- Bugs ---
+  const drawLadybug = (s, seed) => {
+    stroke("#151515");
+    strokeWeight(s * 0.072);
+    strokeCap(ROUND);
+    
+    for (const side of [-1, 1]) {
+      const legWiggle = sin(frameCount * 0.15 + seed) * 0.06 * s;
+      line(side * s * 0.16, -s * 0.18, side * s * 0.68, -s * 0.48 + legWiggle);
+      line(side * s * 0.22, 0, side * s * 0.74, 0 - legWiggle);
+      line(side * s * 0.16, s * 0.18, side * s * 0.68, s * 0.48 + legWiggle);
+    }
+    
+    noStroke();
+    fill("#181818");
+    ellipse(s * 0.4, 0, s * 0.58, s * 0.56);
+    fill("#F03042");
+    ellipse(-s * 0.02, 0, s * 1.08, s * 0.98);
+    stroke("#181818");
+    strokeWeight(s * 0.06);
+    line(-s * 0.54, 0, s * 0.38, 0);
+    noStroke();
+    fill("#111");
+    [
+      [-0.24, -0.24],
+      [-0.24, 0.24],
+      [0.08, -0.22],
+      [0.08, 0.22],
+      [-0.06, 0]
+    ].forEach(([x, y]) => circle(x * s, y * s, s * 0.17));
+    fill(255, 90);
+    [
+      [-0.24, -0.24],
+      [0.08, -0.22]
+    ].forEach(([x, y]) => circle(x * s + s * 0.03, y * s - s * 0.03, s * 0.05));
+    fill(255);
+    circle(s * 0.5, -s * 0.13, s * 0.15);
+    circle(s * 0.5, s * 0.13, s * 0.15);
+    fill("#111");
+    circle(s * 0.54, -s * 0.13, s * 0.075);
+    circle(s * 0.54, s * 0.13, s * 0.075);
+    fill(255);
+    circle(s * 0.565, -s * 0.155, s * 0.025);
+    circle(s * 0.565, s * 0.105, s * 0.025);
+    fill("#E8637A");
+    circle(s * 0.3, -s * 0.05, s * 0.12);
+    circle(s * 0.3, s * 0.05, s * 0.12);
+  };
+
+  const drawBee = (s, seed) => {
+    noStroke();
+    for (const side of [-1, 1]) {
+      push();
+      translate(-s * 0.08, side * s * 0.3);
+      rotate((-side * PI) / 4.5 + sin(frameCount * 0.8 + seed) * 0.22 * side);
+      fill(255, 200);
+      ellipse(0, 0, s * 0.48, s * 0.9);
+      fill(255, 100);
+      ellipse(-s * 0.04, 0, s * 0.26, s * 0.6);
+      pop();
+    }
+    fill("#FFC91E");
+    ellipse(0, 0, s * 1.16, s * 0.78);
+    fill("#202020");
+    rectMode(CENTER);
+    [-0.22, 0.02, 0.26].forEach((x) =>
+      rect(x * s, 0, s * 0.13, s * 0.74, s * 0.05)
+    );
+    fill("#202020");
+    ellipse(s * 0.52, 0, s * 0.5);
+    fill(255);
+    circle(s * 0.6, -s * 0.09, s * 0.15);
+    circle(s * 0.6, s * 0.09, s * 0.15);
+    fill("#111");
+    circle(s * 0.64, -s * 0.09, s * 0.08);
+    circle(s * 0.64, s * 0.09, s * 0.08);
+    fill(255);
+    circle(s * 0.67, -s * 0.11, s * 0.03);
+    circle(s * 0.67, s * 0.07, s * 0.03);
+    stroke("#202020");
+    strokeWeight(s * 0.035);
+    noFill();
+    arc(s * 0.5, s * 0.24, s * 0.24, s * 0.18, 0.1, PI - 0.1);
+    strokeWeight(s * 0.04);
+    arc(s * 0.62, -s * 0.13, s * 0.36, s * 0.3, -HALF_PI, -0.15);
+    arc(s * 0.62, s * 0.13, s * 0.36, s * 0.3, 0.15, HALF_PI);
+    line(s * 0.66, -s * 0.17, s * 0.82, -s * 0.36);
+    line(s * 0.66, s * 0.17, s * 0.82, s * 0.36);
+    noStroke();
+    fill("#202020");
+    triangle(-s * 0.8, 0, -s * 0.58, -s * 0.07, -s * 0.58, s * 0.07);
+  };
+
+  const drawButterfly = (s, seed) => {
+    stroke("#181818");
+    strokeWeight(s * 0.035);
+    
+    const wingFlap = map(sin(frameCount * 0.18 + seed), -1, 1, 0.2, 1.0);
+    
+    for (const side of [-1, 1]) {
+      push();
+      scale(side, 1);
+      scale(wingFlap, 1); 
+      fill("#FF6A28");
+      ellipse(s * 0.36, -s * 0.3, s * 0.72, s * 0.66);
+      fill("#FFA820");
+      ellipse(s * 0.3, s * 0.24, s * 0.56, s * 0.48);
+      fill("#FFF6D0");
+      circle(s * 0.56, -s * 0.42, s * 0.11);
+      circle(s * 0.5, -s * 0.06, s * 0.1);
+      circle(s * 0.38, s * 0.24, s * 0.09);
+      fill(255, 90);
+      circle(s * 0.44, -s * 0.5, s * 0.05);
+      stroke("#7B3A15");
+      strokeWeight(s * 0.03);
+      line(0, 0, s * 0.68, -s * 0.4);
+      line(0, 0, s * 0.5, s * 0.32);
+      pop();
+    }
+    noStroke();
+    fill("#1A1A1A");
+    ellipse(0, 0, s * 0.18, s * 1.05);
+    stroke("#1A1A1A");
+    strokeWeight(s * 0.035);
+    noFill();
+    arc(0, -s * 0.5, s * 0.4, s * 0.5, PI * 1.08, PI * 1.48);
+    arc(0, s * 0.5, s * 0.4, s * 0.5, PI * 0.52, PI * 0.92);
+    line(0, -s * 0.5, -s * 0.16, -s * 0.78);
+    line(0, -s * 0.5, s * 0.16, -s * 0.78);
+    noStroke();
+    fill(255);
+    circle(-s * 0.06, -s * 0.53, s * 0.14);
+    circle(s * 0.06, -s * 0.53, s * 0.14);
+    fill("#111");
+    circle(-s * 0.06, -s * 0.53, s * 0.07);
+    circle(s * 0.06, -s * 0.53, s * 0.07);
+    fill(255);
+    circle(-s * 0.085, -s * 0.56, s * 0.025);
+    circle(s * 0.035, -s * 0.56, s * 0.025);
+  };
+
+  const BUG_RENDERERS = {
+    ladybug: drawLadybug,
+    bee: drawBee,
+    butterfly: drawButterfly
+  };
+
+  const perchingBug = (f, r) => {
+    push();
+    rotate(f.bugAngle);
+    
+    const t = frameCount;
+    const drifts = {
+      bee: [sin(t * 0.12 + f.seed) * 2, cos(t * 0.16 + f.seed) * 2],
+      butterfly: [sin(t * 0.04 + f.seed) * 1.5, cos(t * 0.06 + f.seed) * 3],
+      ladybug: [sin(t * 0.03 + f.seed) * 0.8, 0]
+    };
+    const [shiftX, shiftY] = drifts[f.bugType] || [0, 0];
+    
+    translate(shiftX, -r * f.bugDistanceRatio + shiftY);
+    rotate(PI / 2);
+    noStroke();
+    BUG_RENDERERS[f.bugType]?.(11.5 * f.bugScale, f.seed);
+    pop();
+  };
+
+  // --- Flowers ---
+  const shadeUp = (c, amt) => lerpColor(c, color(255), amt);
+
+  const drawDaisy = (r, c1, c2) => {
+    petalRing(24, r * 1.1, r * 0.24, c1, c2);
+    petalRing(24, r * 0.88, r * 0.136, c2, shadeUp(c2, 0.4), PI / 24);
+    speckledCenter(r * 0.24, color(255, 180, 0), color(230, 90, 0), 180, [1.5, 3.5]);
+  };
+
+  const drawCosmos = (r, c1, c2) => {
+    petalRing(8, r * 1.05, r * 0.44, c1, c2);
+    petalRing(8, r * 0.89, r * 0.396, c2, shadeUp(c2, 0.3), PI / 8);
+    speckledCenter(r * 0.2, color(100, 60, 20), color(255, 200, 10), 90, [2, 4.5]);
+  };
+
+  const drawBlossom = (r, c1, c2) => {
+    petalRing(5, r * 0.95, r * 0.52, c1, c2);
+    const cRad = r * 0.22;
+
+    for (let i = 0; i < 15; i++) {
+      const a = (TWO_PI * i) / 15 + random(-0.1, 0.1),
+        sl = cRad * random(0.8, 1.4);
+      const tx = cos(a) * sl,
+        ty = sin(a) * sl;
+      
+      stroke("#1A1A1A");
+      strokeWeight(2.6);
+      line(0, 0, tx, ty);
+      
+      stroke(255, 210, 80);
+      strokeWeight(1.2);
+      line(0, 0, tx, ty);
+      
+      push();
+      noStroke();
+      fill(240, 80, 20);
+      circle(tx, ty, random(2, 4));
+      pop();
+    }
+    noStroke();
+    fill(c2);
+    circle(0, 0, cRad * 0.55);
+  };
+
+  const BLOOM_RENDERERS = {
+    daisy: drawDaisy,
+    cosmos: drawCosmos,
+    blossom: drawBlossom
+  };
+
+  const renderFlower = (f) => {
+    randomSeed(f.seed);
+    push();
+    translate(f.x, f.y);
+    rotate(f.rotation);
+    scale(f.skewX, f.skewY);
+    leafCluster(f.leafCount, f.r);
+    BLOOM_RENDERERS[f.type]?.(f.r, f.baseColor, shadeUp(f.baseColor, 0.35));
+    if (PARAMS.spawnBugs && f.hasBug) perchingBug(f, f.r);
+    pop();
+  };
+
+  // --- Tweakpane ---
+  const createTweakPane = (p, onChange) => {
+    const pane = new Pane({ title: "⚙️ Settings" });
+    
+    const config = [
+      ["flowerType", { label: "Type", options: { Mixed: "mixed", Daisy: "daisy", Cosmos: "cosmos", Blossom: "blossom" } }],
+      ["minRadius", { label: "Min", min: 36, max: 72, step: 1 }],
+      ["maxRadius", { label: "Max", min: 72, max: 144, step: 1 }],
+      ["spawnBugs", { label: "Bugs?" }],
+      ["bugChance", { label: "🐞 Rate", min: 0, max: 1, step: 0.05 }]
+    ];
+    
+    config.forEach(([key, options]) => pane.addBinding(p, key, options));
+    pane.on("change", onChange);
+    return pane;
+  };
+
+  console.log('🌺 Flower Garden | Click to regenerate | Tweak settings in panel');
+</script>
+</body>
+</html>
